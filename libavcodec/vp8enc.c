@@ -1,3 +1,7 @@
+// Native VP8 encoder for FFmpeg
+// Written by Mike Melanson (mike -at- multimedia.cx)
+// LGPL-licensed, just like the bulk of FFmpeg
+
 #include "avcodec.h"
 #include "dsputil.h"
 #include "mpegvideo.h"
@@ -731,241 +735,6 @@ static void vp8_process_mb_luma_i16x16(VP8Context *s, int mb,
     }
 }
 
-#if 0
-// Copy the 16x16 sample block to a work area. Create a reconstruction block
-// that is 21x21 samples large. This is prefilled in the left, top, and right
-// edges with the correct predictors.
-#define WORK_STRIDE 21
-static void vp8_process_mb_luma_i4x4(VP8Context *s, int mb,
-    uint8_t recon_block[LUMA_BLOCK_SIZE])
-{
-    uint8_t yblock[16 * 16];
-    uint8_t recon[WORK_STRIDE*21];
-    uint8_t *recon_ptr;
-    short samples[16];
-    short transformed[16];
-    int x, y;
-    unsigned char *byte_ptr;
-    int mb_row;
-    int mb_col;
-    short top[8];
-    short left[8];
-    short left_top;
-    int block;
-    int block_row;
-    int block_col;
-//    int top_row;
-//    int left_column;
-//    int right_column;
-
-int dc_pred;
-
-    macroblock *cur_mb = &s->mbs[mb];
-
-    mb_row = mb / s->mb_width;
-    mb_col = mb % s->mb_width;
-
-    // prepare the work block
-byte_ptr = 
-    s->picture.data[0] + 
-    (mb_row * 16) * s->picture.linesize[0] + 
-    (mb_col * 16);
-av_log(NULL, AV_LOG_INFO, "luma macroblock %d (original)\n", mb);
-for (y = 0; y < 256; y++)
-{
-    av_log(NULL, AV_LOG_INFO, " %3d", byte_ptr[y % 16]);
-    if (y % 16 == 15)
-    {
-        av_log(NULL, AV_LOG_INFO, "\n");
-        byte_ptr += s->picture.linesize[0];
-    }
-}
-
-    byte_ptr = 
-        s->picture.data[0] + 
-        (mb_row * 16) * s->picture.linesize[0] + 
-        (mb_col * 16);
-    for (y = 0; y < 16; y++)
-    {
-        for (x = 0; x < 16; x++)
-            yblock[y*16+x] = byte_ptr[x];
-        byte_ptr += s->picture.linesize[0];
-    }
-
-    // set up initial predictors in the reconstruction block
-    // top row
-    if (mb_row == 0)
-    {
-        for (x = 0; x < WORK_STRIDE; x++)
-            recon[x] = 128;
-    }
-    else
-    {
-        byte_ptr = 
-            s->picture.data[0] + 
-            (mb_row * 16 - 1) * s->picture.linesize[0] + 
-            (mb_col * 16);
-        // left-top predictor
-        if (mb_col == 0)
-            recon[0] = 128;
-        else
-            recon[0] = byte_ptr[-1];
-    }
-    // left column
-    if (mb_col == 0)
-    {
-        for (x = WORK_STRIDE; x < WORK_STRIDE * 17; x += WORK_STRIDE)
-            recon[x] = 128;
-    }
-    else
-    {
-        byte_ptr = 
-            s->picture.data[0] + 
-            (mb_row * 16) * s->picture.linesize[0] + 
-            (mb_col * 16 - 1);
-        for (x = WORK_STRIDE; x < WORK_STRIDE * 17; x += WORK_STRIDE)
-        {
-            recon[x] = *byte_ptr;
-            byte_ptr += s->picture.linesize[0];
-        }
-    }
-    // right column
-#warning: TODO: right and left column predictor logic
-
-    // process each of the 16 Y sub-blocks
-    cur_mb->luma_mode = VP8_B_PRED;
-    for (block = 0; block < 16; block++)
-    {
-        // copy the Y samples to a working area
-        block_row = block / 4;
-        block_col = block % 4;
-        byte_ptr = yblock + block_row * 16 * 4 + block_col * 4;
-        for (y = 0; y < 4; y++)
-        {
-            for (x = 0; x < 4; x++)
-                samples[y * 4 + x] = byte_ptr[x];
-            byte_ptr += 16;
-        }
-av_log(NULL, AV_LOG_INFO, " block %d (original)\n", block);
-for (y = 0; y < 16; y++)
-{
-    av_log(NULL, AV_LOG_INFO, " %3d", samples[y]);
-    if (y % 4 == 3)
-        av_log(NULL, AV_LOG_INFO, "\n");
-}
-
-        // get the left_top predictor
-        left_top = *(recon +
-            block_row * WORK_STRIDE * 4 + 
-            block_col * 4);
-
-        // prep the top predictors
-        byte_ptr = recon + 
-            1 +
-            block_row * WORK_STRIDE * 4 + 
-            block_col * 4;
-        for (x = 0; x < 8; x++)
-            top[x] = byte_ptr[x];
-
-        // prep the left predictors
-        byte_ptr = recon + 
-            WORK_STRIDE +
-            block_row * WORK_STRIDE * 4 + 
-            block_col * 4;
-        for (y = 0; y < 8; y++)
-        {
-            left[y] = *byte_ptr;
-            byte_ptr += WORK_STRIDE;
-        }
-
-        // decide on a Y predictor and subtract it from the work MB
-        // DC for starters
-        cur_mb->intra_modes[block] = VP8_B_DC_PRED;
-        dc_pred = 4;
-        for (x = 0; x < 4; x++)
-            dc_pred += top[x] + left[x];
-        dc_pred >>= 3;
-        for (x = 0; x < 16; x++)
-            samples[x] -= dc_pred;
-
-av_log(NULL, AV_LOG_INFO, " block %d, predictor removed\n", block);
-for (y = 0; y < 16; y++)
-{
-    av_log(NULL, AV_LOG_INFO, " %3d", samples[y]);
-    if (y % 4 == 3)
-        av_log(NULL, AV_LOG_INFO, "\n");
-}
-        // transform the block
-        vp8_short_fdct4x4_c_0_9_5(samples, transformed, 4);
-        
-        // copy the Y coefficients back
-        for (x = 0; x < 16; x++)
-            samples[x] = transformed[x];
-av_log(NULL, AV_LOG_INFO, " block %d, transformed\n", block);
-for (y = 0; y < 16; y++)
-{
-    av_log(NULL, AV_LOG_INFO, " %3d", samples[y]);
-    if (y % 4 == 3)
-        av_log(NULL, AV_LOG_INFO, "\n");
-}
-
-        // quantize the Y block
-        samples[0] /= s->q_y_dc;
-        for (x = 1; x < 16; x++)
-            samples[x] /= s->q_y_ac;
-av_log(NULL, AV_LOG_INFO, " block %d, quantized\n", block);
-for (y = 0; y < 16; y++)
-{
-    av_log(NULL, AV_LOG_INFO, " %3d", samples[y]);
-    if (y % 4 == 3)
-        av_log(NULL, AV_LOG_INFO, "\n");
-}
-
-        // transfer to the quantized Y block for later bitstream encoding
-        for (x = 0; x < 16; x++)
-            cur_mb->coeffs_i4x4[block][inv_zigzag_scan[x]] = samples[x];
-
-        // dequantize the Y block for private reconstruction
-        samples[0] *= s->q_y_dc;
-        for (x = 1; x < 16; x++)
-            samples[x] *= s->q_y_ac;
-
-av_log(NULL, AV_LOG_INFO, " block %d, dequantized\n", block);
-for (y = 0; y < 16; y++)
-{
-    av_log(NULL, AV_LOG_INFO, " %3d", samples[y]);
-    if (y % 4 == 3)
-        av_log(NULL, AV_LOG_INFO, "\n");
-}
-        // predict the base block in the recon block
-        recon_ptr = recon + 
-            1 + WORK_STRIDE +
-            block_row * WORK_STRIDE * 4 + 
-            block_col * 4;
-        vp8_compute_predictor_block(recon_ptr, WORK_STRIDE, 
-            top, left, left_top, 
-            cur_mb->intra_modes[block], 4,
-            0, 0);  // no special considerations from top or left
-
-        // inverse DCT on each Y block
-        s->vp8dsp.vp8_idct_add(recon_ptr, samples, WORK_STRIDE);
-
-av_log(NULL, AV_LOG_INFO, " block %d, reconstructed\n", block);
-for (y = 0; y < 16; y++)
-{
-    av_log(NULL, AV_LOG_INFO, " %3d", recon_ptr[y%4]);
-    if (y % 4 == 3)
-    {
-        recon_ptr += WORK_STRIDE;
-        av_log(NULL, AV_LOG_INFO, "\n");
-    }
-}
-
-    }
-}
-#endif
-
-
 static void vp8_process_mb_chroma(VP8Context *s, int mb)
 {
     short work_uv_mb[2][2][2][16];
@@ -1200,7 +969,7 @@ static const int8_t vp8_token_coef_tree [NUM_DCT_TOKENS - 1][2] =
     {-DCT_CAT5, -DCT_CAT6}
 };
 
-int category_bases[] = { 5, 7, 11, 19, 35, 67 };
+static int vp8_category_bases[] = { 7, 7, 11, 19, 35, 67 };
 
 // copied here because the version in vp8data.h doesn't go far enough
 static const uint8_t * const cat_probs[] =
@@ -1308,7 +1077,7 @@ static void vp8_encode_block_coeffs(vp8_bool_encoder *vbe, DCTELEM coeffs[16], i
         // encode the token residual for category 1..6 tokens
         if (token >= DCT_CAT1)
         {
-            residual = coeff - category_bases[token - DCT_CAT1];
+            residual = coeff - vp8_category_bases[token - DCT_CAT1];
             if (token == DCT_CAT6)
                 mask = 1 << (11 - 1);
             else
